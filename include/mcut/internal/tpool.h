@@ -48,6 +48,7 @@
 #include <functional>
 #include <list>
 #include <utility>
+#include <unistd.h>
 
 #include "mcut/internal/utils.h"
 
@@ -144,11 +145,19 @@ private:
     // See here: https://developercommunity.visualstudio.com/t/unexpected-warning-c26115-for-returning-a-unique-l/1077322
     _Acquires_lock_(return)
 #endif
-        std::unique_lock<std::mutex> wait_for_data()
+    std::unique_lock<std::mutex> wait_for_data()
     {
         std::unique_lock<std::mutex> head_lock(head_mutex);
-        auto until = [&]() { return m_done->load() || head.get() != get_tail(); };
+        auto until = [&]()
+        {
+            bool done = m_done->load();
+            bool have_items = head.get() != get_tail();
+            //printf("wait_for_data sleep 3\n");
+            //sleep(3);
+            return done || have_items;
+        };
         data_cond.wait(head_lock, until);
+        //printf("wait_for_data locked\n");
         return head_lock;
     }
 
@@ -185,17 +194,15 @@ public:
         // is too slow to reach this function i.e. that an API/context/device thread
         // waits on the condition variable AFTER the client thread calls notify_one()
         std::unique_lock<std::mutex> lock(head_mutex);
-        data_cond.notify_one();
-    }
-
-    void notify_one()
-    {
+        //printf("disrupt notify\n");
         data_cond.notify_one();
     }
 
     void push(T new_value)
     {
         std::shared_ptr<T> new_data(std::make_shared<T>(std::move(new_value)));
+        //printf("push sleep before push\n");
+        //sleep(1);
         std::unique_ptr<node> p(new node);
         {
             std::lock_guard<std::mutex> tail_lock(tail_mutex);
@@ -204,7 +211,11 @@ public:
             tail->next = std::move(p);
             tail = new_tail;
         }
-        data_cond.notify_one();
+        //printf("push sleep 1\n");
+        //sleep(1);
+        //printf("push notify one\n");
+        //data_cond.notify_one();
+        disrupt_wait_for_data();
     }
 
     void wait_and_pop(T& value)
